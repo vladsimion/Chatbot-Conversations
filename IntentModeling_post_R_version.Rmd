@@ -9,11 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+Initialize spacyr.
 
 ```{r initialize spacy}
 library(spacyr)
@@ -21,9 +17,7 @@ library(spacyr)
 spacy_initialize()
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
+Read data.
 
 ```{r read data}
 library(data.table)
@@ -33,6 +27,8 @@ df <- df[df$`Consumer complaint narrative` != "",]
 set.seed(123)
 df <- df[sample(1:nrow(df), 200000)]
 ```
+
+Parse with spacyr. I use 8 cores and foreach on an Ubuntu machine.
 
 ```{r spacy parse}
 t1 <- Sys.time()
@@ -55,6 +51,8 @@ t2 <- Sys.time()
 t2 - t1
 ```
 
+Some observations (22 our of 200k) do not have noun phrases, so we remove those. The reason is the message is too short.
+
 ```{r remove incomplete observations}
 length(x)
 col_count <- do.call("rbind", lapply(x, ncol))
@@ -62,10 +60,14 @@ head(col_count)
 length(which(col_count != 8))
 ```
 
+After removing the incomplete messages we rbind the list elements into a dataframe.
+
 ```{r convert_process}
 x <- x[-which(col_count != 8)]
 parsed_text <- do.call("rbind", x)
 ```
+
+We start counting verbs, nouns and noun phrases.
 
 ```{r verb_noun_count}
 library(magrittr)
@@ -102,6 +104,8 @@ head(incl_noun_phrases)
 nrow(incl_noun_phrases)
 ```
 
+Build a one-hot encoded matrix of the chosen verbs, nouns and noun phrases.
+
 ```{r binary_lines}
 binary_lines <- matrix(0, nrow = nrow(df), ncol = (nrow(incl_nouns)+nrow(incl_verbs)+nrow(incl_noun_phrases)))
 # binary_lines <- matrix(0, nrow = nrow(new_df), ncol = (nrow(incl_nouns)+nrow(incl_verbs)))
@@ -131,6 +135,8 @@ colnames(binary_lines) <- c(as.character(incl_noun_phrases$token), as.character(
 head(binary_lines,10)
 ```
 
+We need to convert the noun phrases in the original text to the underscore joined version so we can correctly conduct an n-gram analysis using the tokenized noun phrases.
+
 ```{r convert_original_text_to_joined_nounphrase}
 t1 <- Sys.time()
 for(i in 1:length(df$`Consumer complaint narrative`)) {
@@ -144,22 +150,13 @@ t2 <- Sys.time()
 t2 - t1
 ```
 
-```{r TEST_convert_original_text_to_joined_nounphrase}
-# t1 <- Sys.time()
-# # for(i in 1:length(df$`Consumer complaint narrative`)) {
-# for(i in 3:4) {
-#   if(i %% 10000 == 0) {
-#     print(i)
-#   }
-#   df$test[i] <- str_replace_all(df$`Consumer complaint narrative`[i], setNames(c(as.character(incl_noun_phrases$token)), c(as.character(incl_noun_phrases$unjoined_nounphrase))))
-# }
-# t2 <- Sys.time()
-# t2 - t1
-```
+Do some kmeans clustering.
 
 ```{r kmeans}
 kmeans <- kmeans(binary_lines, centers = 50)
 ```
+
+Inspect the number of observations per cluster, and asign a cluster identifier to each observation in the original dataframe.
 
 ```{r inspect kmeans}
 table(kmeans$cluster)
@@ -169,6 +166,8 @@ head(kmeans$cluster)
 df$cluster <- kmeans$cluster
 df$`Consumer complaint narrative`[head(kmeans$cluster)]
 ```
+
+Conduct n-gram analysis on cluster 46.
 
 ```{r n-grams}
 # Check n-grams for nth cluster
@@ -181,6 +180,8 @@ nrow(chat_ngrams)
 chat_ngrams %>%
   count(ngram, sort = TRUE)
 ```
+
+Tie back the chosen keywords to the actual complaints for further investigation.
 
 ```{r keywords}
 keyword_bool <- str_detect(df$`Consumer complaint narrative`, "a victim of identity_theft")
