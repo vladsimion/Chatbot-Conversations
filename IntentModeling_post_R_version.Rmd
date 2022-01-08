@@ -1,0 +1,188 @@
+---
+title: "Chatbot_Parallelize_spacyr"
+author: "Jasen Mackie"
+date: "02/01/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r initialize spacy}
+library(spacyr)
+# spacy_install() # run this once, to create a new conda environment "spacy_condaenv"
+spacy_initialize()
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r read data}
+library(data.table)
+df <- fread("complaints.csv", select = c("Product", "Consumer complaint narrative", "Sub-issue"))
+df <- df[df$`Consumer complaint narrative` != "",]
+# df <- fread("shuf -n 200000 complaints.csv")
+set.seed(123)
+df <- df[sample(1:nrow(df), 200000)]
+```
+
+```{r spacy parse}
+t1 <- Sys.time()
+library(doParallel)
+library(parallel)
+registerDoParallel(8)
+library(foreach)
+require(magrittr)
+require(dplyr)
+
+t1 <- Sys.time()
+x <- foreach(i = 1:nrow(df)) %dopar% {
+  spacy_parse(df$`Consumer complaint narrative`[i],
+              lemma = FALSE,
+              entity = TRUE,
+              nounphrase = TRUE) %>%
+    mutate(complaint_id = df$`Complaint ID`[i])
+}
+t2 <- Sys.time()
+t2 - t1
+```
+
+```{r remove incomplete observations}
+length(x)
+col_count <- do.call("rbind", lapply(x, ncol))
+head(col_count)
+length(which(col_count != 8))
+```
+
+```{r convert_process}
+x <- x[-which(col_count != 8)]
+parsed_text <- do.call("rbind", x)
+```
+
+```{r verb_noun_count}
+library(magrittr)
+library(dplyr)
+verb_count <- parsed_text %>% filter(pos=="VERB") %>% count(token, sort=TRUE)
+t(head(verb_count, 10))
+nrow(verb_count)
+
+noun_count <- parsed_text %>% filter(pos=="NOUN") %>% count(token, sort=TRUE)
+t(head(noun_count, 10))
+nrow(noun_count)
+
+t1 <- Sys.time()
+noun_phrases <- nounphrase_consolidate(parsed_text)
+t2 <- Sys.time()
+t2-t1
+```
+
+```{r ok_real_count_this_time}
+incl_verbs <- verb_count[verb_count$n >= 10000,]
+head(incl_verbs)
+nrow(incl_verbs)
+
+incl_nouns <- noun_count[noun_count$n >= 10000,]
+head(incl_nouns)
+nrow(incl_nouns)
+
+nounphrase_count <- noun_phrases %>% filter(pos=="nounphrase") %>% count(token, sort=TRUE)
+t(head(nounphrase_count, 100))
+nrow(nounphrase_count)
+
+incl_noun_phrases <- nounphrase_count[nounphrase_count$n >= 10000,]
+head(incl_noun_phrases)
+nrow(incl_noun_phrases)
+```
+
+```{r binary_lines}
+binary_lines <- matrix(0, nrow = nrow(df), ncol = (nrow(incl_nouns)+nrow(incl_verbs)+nrow(incl_noun_phrases)))
+# binary_lines <- matrix(0, nrow = nrow(new_df), ncol = (nrow(incl_nouns)+nrow(incl_verbs)))
+dim(binary_lines)
+```
+
+```{r one-hot encode}
+# Replace spaces in between noun phrases with undercores so we can use them as single tokens
+incl_noun_phrases$unjoined_nounphrase <- gsub("_", " ", incl_noun_phrases$token)
+# incl_noun_phrases$unjoined_nounphrase <- str_replace_all(as.character(incl_noun_phrases$token), setNames("_", " "))
+head(incl_noun_phrases, 20)
+head(as.character(incl_noun_phrases$unjoined_nounphrase))
+
+# TODO: convert to foreach
+library(stringr)
+t1 <- Sys.time()
+for(i in 1:length(df$`Consumer complaint narrative`)){
+  if(i %% 10000 == 0) {
+    print(i)
+  }
+    binary_lines[i,] <- str_detect(df$`Consumer complaint narrative`[i] , c(as.character(incl_noun_phrases$token), as.character(incl_nouns$token), as.character(incl_verbs$token)))
+    # binary_lines[i,] <- str_detect(new_df$clean_text[i] , c(as.character(incl_nouns$lemma), as.character(incl_verbs$lemma))) # use if we exclude noun phrases
+}
+t2 <- Sys.time()
+t2 - t1
+colnames(binary_lines) <- c(as.character(incl_noun_phrases$token), as.character(incl_nouns$token), as.character(incl_verbs$token))
+head(binary_lines,10)
+```
+
+```{r convert_original_text_to_joined_nounphrase}
+t1 <- Sys.time()
+for(i in 1:length(df$`Consumer complaint narrative`)) {
+# for(i in 1:2) {
+  if(i %% 10000 == 0) {
+    print(i)
+  }
+  df$`Consumer complaint narrative`[i] <- str_replace_all(df$`Consumer complaint narrative`[i], setNames(c(as.character(incl_noun_phrases$token)), c(as.character(incl_noun_phrases$unjoined_nounphrase))))
+}
+t2 <- Sys.time()
+t2 - t1
+```
+
+```{r TEST_convert_original_text_to_joined_nounphrase}
+# t1 <- Sys.time()
+# # for(i in 1:length(df$`Consumer complaint narrative`)) {
+# for(i in 3:4) {
+#   if(i %% 10000 == 0) {
+#     print(i)
+#   }
+#   df$test[i] <- str_replace_all(df$`Consumer complaint narrative`[i], setNames(c(as.character(incl_noun_phrases$token)), c(as.character(incl_noun_phrases$unjoined_nounphrase))))
+# }
+# t2 <- Sys.time()
+# t2 - t1
+```
+
+```{r kmeans}
+kmeans <- kmeans(binary_lines, centers = 50)
+```
+
+```{r inspect kmeans}
+table(kmeans$cluster)
+sum(table(kmeans$cluster))
+head(kmeans$cluster)
+
+df$cluster <- kmeans$cluster
+df$`Consumer complaint narrative`[head(kmeans$cluster)]
+```
+
+```{r n-grams}
+# Check n-grams for nth cluster
+library(tidytext)
+chat_ngrams <- df[which(df$cluster == 46),] %>%
+  unnest_tokens(ngram, `Consumer complaint narrative`, token = "ngrams", n = 4)
+head(chat_ngrams$ngram, 20)
+# head(new_lines_tidytext_df[which(new_lines_tidytext_df$cluster == 38),])
+nrow(chat_ngrams)
+chat_ngrams %>%
+  count(ngram, sort = TRUE)
+```
+
+```{r keywords}
+keyword_bool <- str_detect(df$`Consumer complaint narrative`, "a victim of identity_theft")
+keyword_df <- df$`Consumer complaint narrative`[keyword_bool]
+```
