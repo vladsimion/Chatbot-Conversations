@@ -126,7 +126,7 @@ for(i in 1:length(df$`Consumer complaint narrative`)){
   if(i %% 10000 == 0) {
     print(i)
   }
-    binary_lines[i,] <- str_detect(df$`Consumer complaint narrative`[i] , c(as.character(incl_noun_phrases$token), as.character(incl_nouns$token), as.character(incl_verbs$token)))
+    binary_lines[i,] <- str_detect(df$`Consumer complaint narrative`[i] , c(as.character(incl_noun_phrases$unjoined_nounphrase), as.character(incl_nouns$token), as.character(incl_verbs$token)))
     # binary_lines[i,] <- str_detect(new_df$clean_text[i] , c(as.character(incl_nouns$lemma), as.character(incl_verbs$lemma))) # use if we exclude noun phrases
 }
 t2 <- Sys.time()
@@ -167,12 +167,12 @@ df$cluster <- kmeans$cluster
 df$`Consumer complaint narrative`[head(kmeans$cluster)]
 ```
 
-Conduct n-gram analysis on cluster 46.
+Conduct n-gram analysis on cluster 15.
 
 ```{r n-grams}
 # Check n-grams for nth cluster
 library(tidytext)
-chat_ngrams <- df[which(df$cluster == 46),] %>%
+chat_ngrams <- df[which(df$cluster == 15),] %>%
   unnest_tokens(ngram, `Consumer complaint narrative`, token = "ngrams", n = 4)
 head(chat_ngrams$ngram, 20)
 # head(new_lines_tidytext_df[which(new_lines_tidytext_df$cluster == 38),])
